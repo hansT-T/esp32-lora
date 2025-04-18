@@ -33,49 +33,18 @@
 #include "../driver/debug.h"
 #include<time.h>
 extern  void lora_printf(const char *format, ...);
-char SendTimeBuffer[10];
-char RecvTimeBuffer[10];
-double SendTimeStamps[16];
-double RecvTimeStamps[16];
-double time_skew = 1;
-double time_offset = 0;
-int TimeStampPtr = 0;
-int stampSize = 0;
-extern bool SYNCED;
 
-//Synchronization module
-//author chris
-long long Tx_Done;
-long long Rx_Done;
-long T_ToA;
-long T_Decode;
-bool RecvOrTm = true;
-unsigned long int systime;
+
 unsigned long int sysTime;
 unsigned long int t1,t2;
-unsigned long int XTime;
-extern long long getSysTime(){
-	struct timeval tv;
-	gettimeofday(&tv, NULL);
-	return tv.tv_sec*1000000+tv.tv_usec;
-}
-double getSyncTime(){
-    struct timeval tv;
-	gettimeofday(&tv, NULL);
-    long t1 = tv.tv_sec*1000000+tv.tv_usec;
-    double t2 = (double)t1 /1000000;
-    double t3 = t2*time_skew + time_offset;
-    return t3;
-}
-
+unsigned long int freqHoppingTime;
 
 //set the default size,0-3:seconds,4-9:microseconds;--->9999.999999--->160mins
 static uint8_t Time[10];
-uint8_t temp[10];
 void getTimeChar(){
-    systime = micros();
+    sysTime = micros();
     char t_data[20];
-    ultoa(systime,t_data,10);
+    ultoa(sysTime,t_data,10);
     memset(Time,'0',sizeof(Time));
     int length = strlen(t_data);
     for(int i=0;i<length;i++){
@@ -83,70 +52,7 @@ void getTimeChar(){
     }
 }
 
-double str2double(char str[]){
-    long i = atoi(str);
-    return (double)i/1000000;
-}
 
-void ProcessSendTimeStamp(uint8_t *buffer,uint16_t size){
-    int i = 0;
-    for(;i<size;i++){
-        if(buffer[i]=='#'){
-            i++;
-            break;
-        }
-    }
-    for(int j=0;j<10;j++,i++){
-        SendTimeBuffer[j]=buffer[i];
-    }
-}
-void ProcessRecvTimeStamp(){
-    for(int i=0;i<10;i++){
-        RecvTimeBuffer[i]=Time[i];
-    }
-}
-
-void ProcessTimeStamp(uint8_t *buffer,uint16_t size){
-    ProcessSendTimeStamp(buffer,size);
-    ProcessRecvTimeStamp();
-    SendTimeStamps[TimeStampPtr]=str2double(SendTimeBuffer);
-    RecvTimeStamps[TimeStampPtr]=str2double(RecvTimeBuffer);
-    TimeStampPtr = (TimeStampPtr+1)%2;
-    stampSize++;
-    if(stampSize>2) stampSize = 2;
-    //For Debug
-    lora_printf("----SendTimeStamp----\n");
-    for(int i =0;i<stampSize;i++){
-        lora_printf("%lf\n",SendTimeStamps[i]);
-    }
-    lora_printf("----RecvTimeStamp----\n");
-    for(int i =0;i<stampSize;i++){
-        lora_printf("%lf\n",RecvTimeStamps[i]);
-    }
-}
-
-unsigned long long int getSTime(){
-    return sysTime;
-}
-
-extern void getTime(long epoch,long ms){
-	struct timeval tv;
-	gettimeofday(&tv, NULL);
-	epoch = tv.tv_sec;
-	ms = tv.tv_usec;
-}
-void getTimeStamp(int pktLen){
-    systime = getSysTime();
-    T_ToA = SX1276GetTimeOnAir(1,pktLen)*1000;
-    systime = systime-T_ToA;
-    char t_data[20];
-    itoa(systime,t_data,10);
-    memset(Time,'0',sizeof(Time));
-    int length = strlen(t_data);
-    for(int i=0;i<length;i++){
-        Time[9-i]=t_data[length-i-1];
-    }
-}
 /*!
  * Radio registers definition
  */
@@ -953,11 +859,14 @@ void SX1276Send( uint8_t *buffer, uint8_t size )
             }
             //modified 2023.10.27 delete channel hopping  author: chris ///+10
             //SX1276.Settings.LoRaPacketHandler.Size = size + 10;
-            SX1276.Settings.LoRaPacketHandler.Size = size;
 
-            // Initializes the payload size
-            //SX1276Write( REG_LR_PAYLOADLENGTH, size + 10);
-            SX1276Write( REG_LR_PAYLOADLENGTH, size);
+            if(SX1276.Settings.LoRa.FreqHopOn == true){
+                SX1276.Settings.LoRaPacketHandler.Size = size + 10;
+                SX1276Write( REG_LR_PAYLOADLENGTH, size + 10);
+            }else{
+                SX1276.Settings.LoRaPacketHandler.Size = size;
+                SX1276Write( REG_LR_PAYLOADLENGTH, size);
+            }
 
             // Full buffer used for Tx
             SX1276Write( REG_LR_FIFOTXBASEADDR, 0 );
@@ -1221,12 +1130,14 @@ void SX1276SetTx( uint32_t timeout )
         break;
     }
     //wait
+    /**
     t1 = micros();
     ets_delay_us(1000000-(t1-sysTime));
     t2 = micros();
     lora_printf("delay:%lu\n",t2-t1);
     lora_printf("StartSendTime:%lu\n",t2);
-    
+    */
+
     SX1276.Settings.State = RF_TX_RUNNING;
     TimerStart( &TxTimeoutTimer );
     SX1276SetOpMode( RF_OPMODE_TRANSMITTER );
@@ -1571,23 +1482,9 @@ void ChannelHoppingTx(){
     int ptr = SX1276Read( REG_LR_FIFOADDRPTR );
     lora_printf("base:%d,ptr:%d\n",base,ptr);
     getTimeChar();
-    lora_printf("SendTime:%s\n",Time);
+    lora_printf("TxHeaderTime:%s\n",Time);
     SX1276.Settings.LoRaPacketHandler.Size = SX1276.Settings.LoRaPacketHandler.Size +10;
     SX1276WriteFifo(Time,10);
-}
-//for rx,need to timestamp the systime;
-void ChannelHoppingRx(int pktLen){
-    if(SYNCED){
-        getTimeChar();
-        lora_printf("tm:%s\n",Time);
-    }
-    else{
-        getTimeStamp(pktLen);
-        lora_printf("RecvTime:%s\n",Time);
-    }
-    //SX1276Write( REG_LR_FIFOADDRPTR, 0 );
-    //SX1276ReadFifo( RxTxBuffer, SX1276.Settings.LoRaPacketHandler.Size);
-    //lora_printf("%s\n",RxTxBuffer);
 }
 
 void SX1276OnDio0Irq( void )
@@ -1750,16 +1647,8 @@ void SX1276OnDio0Irq( void )
                     }
 
                     SX1276.Settings.LoRaPacketHandler.Size = SX1276Read( REG_LR_RXNBBYTES );
-                    //lora_printf("Size:%d\n",SX1276.Settings.LoRaPacketHandler.Size);
                     SX1276Write( REG_LR_FIFOADDRPTR, SX1276Read( REG_LR_FIFORXCURRENTADDR ) );
                     SX1276ReadFifo( RxTxBuffer, SX1276.Settings.LoRaPacketHandler.Size);
-                    //2022.7.3 Chris modify
-                    //ProcessTimeStamp(RxTxBuffer,SX1276.Settings.LoRaPacketHandler.Size);
-                    //LeastSquares(RecvTimeStamps,SendTimeStamps,stampSize,&time_skew,&time_offset);
-                    //lora_printf("%lft+%lf\n",time_skew,time_offset);
-                    //double Synctime = getSyncTime();
-                    //lora_printf("%lf\n",Synctime);
-                    //lora_printf("%s\n",RxTxBuffer);
                     if( SX1276.Settings.LoRa.RxContinuous == false )
                     {
                         SX1276.Settings.State = RF_IDLE;
@@ -1776,14 +1665,12 @@ void SX1276OnDio0Irq( void )
                             lora_printf("RxTime:%lu\n",sysTime);
                         }
                         */
-                        //lora_printf("RxTime:%lu\n",XTime);
+                        if(SX1276.Settings.LoRa.FreqHopOn == true){
+                            lora_printf("RxHeaderTime:%lu\n",freqHoppingTime);
+                        }
                         lora_printf("RxDoneTime:%lu\n",sysTime);
                     	DIO_PRINTF("DIO0:RX Done\r\n");
-                        //ChannelHoppingRx(SX1276.Settings.LoRaPacketHandler.Size);
-                        //Rx_Done = getSysTime();
-                        //DIO_PRINTF("PacketSize:%d\r\n",SX1276.Settings.LoRaPacketHandler.Size);
-                        T_ToA = SX1276GetTimeOnAir(MODEM_LORA,SX1276.Settings.LoRaPacketHandler.Size)*1000;
-                        lora_printf("TOA:%d\n",T_ToA);
+                        lora_printf("TimeOnAir:%d\n",SX1276GetTimeOnAir(MODEM_LORA,SX1276.Settings.LoRaPacketHandler.Size)*1000);
                         RadioEvents->RxDone( RxTxBuffer, SX1276.Settings.LoRaPacketHandler.Size, SX1276.Settings.LoRaPacketHandler.RssiValue, SX1276.Settings.LoRaPacketHandler.SnrValue );
                     }
                 }
@@ -1806,10 +1693,8 @@ void SX1276OnDio0Irq( void )
                 SX1276.Settings.State = RF_IDLE;
                 if( ( RadioEvents != NULL ) && ( RadioEvents->TxDone != NULL ) )
                 {
-                    
                     lora_printf("TxDoneTime:%lu\n",sysTime);
                 	DIO_PRINTF("DIO0:TX Done\r\n");
-                    //Tx_Done = getSysTime();
                     RadioEvents->TxDone( );
                 }
                 break;
@@ -1938,8 +1823,7 @@ void SX1276OnDio2Irq( void )
                     int presentChannel = SX1276Read(REG_LR_HOPCHANNEL); 
                     lora_printf("channel:%d\n",presentChannel);
                     if(presentChannel == 2){
-                        XTime = micros();
-                        //lora_printf("RxTime:%lu\n",XTime);
+                        freqHoppingTime = micros();
                     }
                     if( ( RadioEvents != NULL ) && ( RadioEvents->FhssChangeChannel != NULL ) )
                     {
@@ -1968,7 +1852,7 @@ void SX1276OnDio2Irq( void )
                     lora_printf("channel:%d\n",presentChannel);
                     if(presentChannel == 2){
                         ChannelHoppingTx();
-                        XTime = micros();
+                        freqHoppingTime = micros();
                     }
                     if( ( RadioEvents != NULL ) && ( RadioEvents->FhssChangeChannel != NULL ) )
                     {
