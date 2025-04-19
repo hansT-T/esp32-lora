@@ -35,16 +35,27 @@
 extern  void lora_printf(const char *format, ...);
 
 
-unsigned long int sysTime;
-unsigned long int t1,t2;
-unsigned long int freqHoppingTime;
+/*------------------------------------------------------
 
-//set the default size,0-3:seconds,4-9:microseconds;--->9999.999999--->160mins
-static uint8_t Time[10];
+@Description : 定义全局变量，记录时间戳
+@author : william
+
+------------------------------------------------------*/
+
+unsigned long int sysTime;              //系统时间，触发RxDone和TxDone中断时会记录这个时间，还有要随消息发送时会更新。
+unsigned long int t1,t2;                //用于Secure Identification实验来保证Delta的两个时间，时间同步不用
+unsigned long int freqHoppingTime;      //用于记录触发跳频中断时的时间，主要是接收使用。
+static uint8_t Time[10];                //用于将系统时间转为字符串，便于发送
+
+/*--------------------------------------------------------------
+
+@Description : 获取当前系统时间，并将系统时间转为字符串，存储在Time中，用于随消息发送
+@author : William
+
+----------------------------------------------------------------*/
 void getTimeChar(){
-    sysTime = micros();
     char t_data[20];
-    ultoa(sysTime,t_data,10);
+    ultoa(freqHoppingTime,t_data,10);
     memset(Time,'0',sizeof(Time));
     int length = strlen(t_data);
     for(int i=0;i<length;i++){
@@ -857,8 +868,13 @@ void SX1276Send( uint8_t *buffer, uint8_t size )
                 SX1276Write( REG_LR_INVERTIQ, ( ( SX1276Read( REG_LR_INVERTIQ ) & RFLR_INVERTIQ_TX_MASK & RFLR_INVERTIQ_RX_MASK ) | RFLR_INVERTIQ_RX_OFF | RFLR_INVERTIQ_TX_OFF ) );
                 SX1276Write( REG_LR_INVERTIQ2, RFLR_INVERTIQ2_OFF );
             }
-            //modified 2023.10.27 delete channel hopping  author: chris ///+10
-            //SX1276.Settings.LoRaPacketHandler.Size = size + 10;
+            
+            /*---------------------------------------------------------------------
+            
+            @Description : 当使用跳频中断时，将记录的时间戳随消息一起发送，因此将PAYLOADLENGTH在原来的基础上加10，正好是Time的长度。
+            @author : william
+            
+            ---------------------------------------------------------------------*/
 
             if(SX1276.Settings.LoRa.FreqHopOn == true){
                 SX1276.Settings.LoRaPacketHandler.Size = size + 10;
@@ -1474,18 +1490,31 @@ void SX1276OnTimeoutIrq( void )
     }
 }
 
-//Chris
-//when Channel hopping interrupt happend,TX get the timestamp and wirte to the fifo
-//the fifo size need to initialize in the SX1276Send,because the payload size is assigned in the header
+
+/*--------------------------------------------------------
+
+@Description : 当触发跳频发送中断时，会触发这个函数，用于将触发跳频中断时记录的时间戳写入FIFO中，随payload一起发送
+@author : william
+
+--------------------------------------------------------*/
+
 void ChannelHoppingTx(){
     int base = SX1276Read( REG_LR_FIFOTXBASEADDR );
     int ptr = SX1276Read( REG_LR_FIFOADDRPTR );
     lora_printf("base:%d,ptr:%d\n",base,ptr);
     getTimeChar();
     lora_printf("TxHeaderTime:%s\n",Time);
-    SX1276.Settings.LoRaPacketHandler.Size = SX1276.Settings.LoRaPacketHandler.Size +10;
+    //SX1276.Settings.LoRaPacketHandler.Size = SX1276.Settings.LoRaPacketHandler.Size +10;
     SX1276WriteFifo(Time,10);
 }
+
+
+/*---------------------------------------------------------------
+
+@Description : 触发中断函数，DIO0主要是RxDone和TxDone，主要改动就是触发时打印记录的时间戳。
+@author : william
+
+---------------------------------------------------------*/
 
 void SX1276OnDio0Irq( void )
 {
@@ -1657,6 +1686,8 @@ void SX1276OnDio0Irq( void )
 
                     if( ( RadioEvents != NULL ) && ( RadioEvents->RxDone != NULL ) )
                     {
+
+                        //@Description : 这里是废弃的用于区分：1.接收到用于时间同步的时间，2.用于测试同步精度，来自第三方消息的时间，我选择用发送不同的消息长度来作区分。
                         /*
                         if(SX1276.Settings.LoRaPacketHandler.Size == 5){
                             lora_printf("RxDoneTime:%lu\n",sysTime);
@@ -1665,9 +1696,14 @@ void SX1276OnDio0Irq( void )
                             lora_printf("RxTime:%lu\n",sysTime);
                         }
                         */
+
+
+                        //@Description : 如果是开启跳频，会在这里打印跳频接收的时间，主要是接收完Header时的时间。
                         if(SX1276.Settings.LoRa.FreqHopOn == true){
                             lora_printf("RxHeaderTime:%lu\n",freqHoppingTime);
                         }
+
+                        //@Description : 打印触发RxDone时的时间，以及多计算了一个空中传输时间。
                         lora_printf("RxDoneTime:%lu\n",sysTime);
                     	DIO_PRINTF("DIO0:RX Done\r\n");
                         lora_printf("TimeOnAir:%d\n",SX1276GetTimeOnAir(MODEM_LORA,SX1276.Settings.LoRaPacketHandler.Size)*1000);
@@ -1693,6 +1729,7 @@ void SX1276OnDio0Irq( void )
                 SX1276.Settings.State = RF_IDLE;
                 if( ( RadioEvents != NULL ) && ( RadioEvents->TxDone != NULL ) )
                 {
+                    //@Description : 打印触发TxDone时的时间
                     lora_printf("TxDoneTime:%lu\n",sysTime);
                 	DIO_PRINTF("DIO0:TX Done\r\n");
                     RadioEvents->TxDone( );
@@ -1820,6 +1857,18 @@ void SX1276OnDio2Irq( void )
                     SX1276Write( REG_LR_IRQFLAGS, RFLR_IRQFLAGS_FHSSCHANGEDCHANNEL );
                     //lora_printf("Interrupt\n");
                     
+
+                    /*-------------------------------------------------------------
+                    
+                    @Description : 这里触发跳频中断，由于实验是记录发送/接收完Header的时间，因此通过hopchannel来查看是否发送/接收完成
+                                    很重要的是，手册说明前导码和header是在channel0上发送，发送完成后跳到channnel1，
+                                    但实测，在程序上是channel == 2时，发送完成前导码和header
+                                    具体实测为，改变前导码的长度时，若channel == 2，这个时间与发送完成的时间之间相差的值并不怎么变化，说明都是发送完payload的时间
+                                    相反，channel == 1时，改变前导码的长度，这个差会变长，也就是说channel == 1时，前导码并没有发送。
+                                    还有，由于接收时，channel是一直在改变，以防止错过接收的时间，所以可能会触发好几次channel == 2，但是只取最后一次，因为最后一次
+                                    才是真正的接收，时间在rxdone处打印。
+                    @author : william
+                    -------------------------------------------------------------*/
                     int presentChannel = SX1276Read(REG_LR_HOPCHANNEL); 
                     lora_printf("channel:%d\n",presentChannel);
                     if(presentChannel == 2){
@@ -1846,13 +1895,19 @@ void SX1276OnDio2Irq( void )
                     // Clear Irq
                     SX1276Write( REG_LR_IRQFLAGS, RFLR_IRQFLAGS_FHSSCHANGEDCHANNEL );
                     
-                    //TODO:timestamp and write to fifo  Chris 2022.6.18
                     //lora_printf("Interrupt\n");
+
+                    /*---------------------------------------------------
+                    @Description : 中断的原理同上面接收的一致，此处仅多一个函数，用于将记录的时间写入fifo，同payload一起发送
+                    @author : william
+
+                    ----------------------------------------------------*/
                     int presentChannel = SX1276Read(REG_LR_HOPCHANNEL); 
+
                     lora_printf("channel:%d\n",presentChannel);
                     if(presentChannel == 2){
-                        ChannelHoppingTx();
                         freqHoppingTime = micros();
+                        ChannelHoppingTx();
                     }
                     if( ( RadioEvents != NULL ) && ( RadioEvents->FhssChangeChannel != NULL ) )
                     {
@@ -1932,11 +1987,26 @@ void SX1276OnDio5Irq( void )
     }
 }
 
+/*-----------------------------------------------
+
+@Description : 此处为触发中断的函数，extern引入的变量为在arduino文件中绑定中断信号，触发中断信号后会进入相应的判断，然后进入具体的处理函数。
+                原文件仅定义Irq0和Irq1，我们引入Irq2。
+@author : william
+------------------------------------------------*/
+
 extern bool Irq0Fired;
 extern bool Irq1Fired;
 extern bool Irq2Fired;
+
+
 void  sx1276RadioIrqProcess(void)
 {
+    /*------------------------------------------------
+    
+    @Description : 触发Irq0时，主要就是RxDone和TxDone，因此在这里记录，是最近的。
+                    但由于跳频Irq2会多次触发，因此就不在这里记录，去具体的处理函数中，判断channel再记录。
+
+    ----------------------------------------------*/
 	if(Irq0Fired)
 	{
         sysTime = micros();
