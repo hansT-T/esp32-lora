@@ -293,7 +293,6 @@ void SX1276Init( RadioEvents_t *events )
     }
 
     SX1276SetModem( MODEM_FSK );
-
     SX1276.Settings.State = RF_IDLE;
 }
 
@@ -1146,13 +1145,21 @@ void SX1276SetTx( uint32_t timeout )
         break;
     }
     //wait
-    /**
+    
+    /*----------------------------------------------------------
+    @Description : SNCIK实验，需要接收完成一个消息后，保持一个Delta再发送，因此在这里作delay
+                    t1为当前的时间，t1-sysTime为接收完成后运行到这里花的时间，然后延时Delta - 这部分时间
+                    t2为验证。
+    @author : william
+    -----------------------------------------------------------*/
+
     t1 = micros();
     ets_delay_us(1000000-(t1-sysTime));
     t2 = micros();
     lora_printf("delay:%lu\n",t2-t1);
     lora_printf("StartSendTime:%lu\n",t2);
-    */
+    
+    //end-----------------------------------------------------
 
     SX1276.Settings.State = RF_TX_RUNNING;
     TimerStart( &TxTimeoutTimer );
