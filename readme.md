@@ -2,9 +2,21 @@
 
 ## 项目概述
 
+-时间同步&&安全识别
+
 -本项目适用于heltec产品wifi lora v2，（或者使用esp32+sx1276自行实现绑定引脚，中断等或许也可以）
 
 -原厂的库经过多次迭代后已于我们一直使用的大不相同了，因此一切基于本项目实现
+
+-项目分为arduino，script，src三部分
+
+-arduino文件中为烧录到节点的程序，主要控制节点的收发逻辑。
+
+-script中为处理数据的脚本程序
+
+-src为LoRa的库文件
+
+## src使用说明
 
 -使用前需安装hardware文件：WiFi_Kit_series.zip 链接: https://pan.baidu.com/s/1qLD-n0COJ-IBRDTPRVWlNA?pwd=ubsu 提取码: ubsu
 
@@ -17,5 +29,3 @@
 -main分支为主要实现，snick分支多增加了一个接收完成后，延迟delta后再发送的功能，搭配arduino目录中的code使用
 
 -主要改动均集中在src/driver/sx1276.c中，改动可通过@Description查找
-
--arduino文件中为烧录到节点的程序，主要控制节点的收发逻辑。
