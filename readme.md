@@ -33,9 +33,15 @@
 ## 文件说明
 
 -src/driver/sx1276.c  核心库文件，主要改动均在里面
+
 -arduino/pingpong.ino  节点程序，负责一发一收，也可以改成一直发/一直收...
+
 -script/linear.py  根据t1,t2提取skew和offset
+
 -script/RxDoneTime.py 从节点的串口信息中提取出RxDoneTime，接收完成时间
+
 -script/TxDoneTime.py 同上，发送完成
+
 -script/TxHeaderTime.py 跳频发送中断时间
+
 -script/RxHeaderTime.py 跳频接收中断事件    （仅节点和节点，且没有使用这个时间）
