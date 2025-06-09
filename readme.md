@@ -4,6 +4,8 @@
 
 -时间同步&&安全识别
 
+-main分支为时间同步，snick分支为安全识别
+
 -本项目适用于heltec产品wifi lora v2，（或者使用esp32+sx1276自行实现绑定引脚，中断等或许也可以）
 
 -原厂的库经过多次迭代后已于我们一直使用的大不相同了，因此一切基于本项目实现
@@ -45,3 +47,7 @@
 -script/TxHeaderTime.py 跳频发送中断时间
 
 -script/RxHeaderTime.py 跳频接收中断事件    （仅节点和节点，且没有使用这个时间）
+
+-script/gbm.py gbdt训练和识别程序
+
+-script/knn1.py knn训练和识别程序
